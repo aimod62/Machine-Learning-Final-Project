@@ -1,0 +1,602 @@
+<<<<<<< HEAD
+---
+title: "Machine Learning Project, Coursera"
+author: "aimod62"
+date: "November 15, 2016"
+output: 
+  html_document:
+    number_sections: yes
+    toc: yes
+---
+
+The goal of the present assignment is to provide a machine learning algorithm capable of predicting the manner in which the population perform selected lifting routines. Data is drawn from 6 male participants aged between 20-28 years. The categorical variable **classe** is our response variable. Out of its 5 levels: classe **A** represents a well done execution. The remaining four levels: **B, C, D, E ** portray minor failures.  
+
+A typical classification problem of supervised learning. 
+
+
+##Loading Required Libraries
+
+```{r, message = FALSE, warning = FALSE, comment = NA}
+library(caret)
+library(ranger)
+library(foreach)
+library(e1071)
+library(rpart)
+library(C50)
+library(kernlab)
+library(MASS)
+library(klaR)
+library(ipred)
+library(plyr)
+```
+
+##Loading the Data
+
+Two sets of data have been provided by the assignment prompt:
+
+Training set: 19622 Observations and 160 Variables
+
+Testing set: 20 Observations and 160 Variables
+
+As expected, the test set would be brought out only at the end of the submission in order to assess the generalization error, and corroborate its accuracy by means of the mandatory quiz.
+
+
+```{r, message = FALSE, warning = FALSE, comment = NA}
+pml.training <- read.csv("C:/Users/AstridIleana/Desktop/Machine Learning/Project/pml-training.csv", stringsAsFactors=FALSE)
+pml.testing <- read.csv("C:/Users/AstridIleana/Desktop/Machine Learning/Project/pml-testing.csv", stringsAsFactors= FALSE)
+
+
+```
+
+##Data Partition
+
+The given training data set has been further partitioned in a validation data set. A highly recommendable practice meant to estimate the prediction error of the model.
+
+
+```{r, message = FALSE, warning = FALSE, comment = NA}
+set.seed(1028)
+inTrain <- createDataPartition(y = pml.training$classe, # Outcome Data
+                               p = 0.75,                # Data percentage in the training set.
+                               list = FALSE)            # Results format
+
+#Creating the training and validation set
+
+training <- pml.training[inTrain, ]
+validation <- pml.training[-inTrain, ]
+dim(training); dim(validation)
+table(as.factor(training$classe))
+table(as.factor(validation$classe))
+
+
+```
+
+
+##Removing Irrelevant and Redundant Information
+
+A subset of the training data has been created. Two features have been removed: near zero variances variables and NA values. The idea is to clear as much redundant and irrelevant data as possible; in order to reduce the dimensionality and allow the algorithm to operate faster and more accurate. 
+
+
+```{r, message = FALSE, warning = FALSE, comment = NA}
+
+#Getting rid of near zero variance predictors and NA values
+remove <- nearZeroVar(training, names = TRUE, allowParallel = TRUE)
+trainingAdjusted <- training[, setdiff(names(training), remove)]
+trainingAdjusted <- trainingAdjusted[, colSums(is.na(trainingAdjusted)) == 0]
+dim(trainingAdjusted)
+
+```
+
+##Trial and Error, in Search of the Best Fit
+
+Since there is no clue of the data distribution until now, an ensemble of models have been chosen from the wide spectrum to look for the best fit. The idea is to use few of them, and evolve further. 
+
+*Non-linear Methods: knn, NaiveBayes, SVM
+
+*Linear Methods: Linear Discriminant Analysis 
+
+*Ensemble of Trees: CART(rpart)
+
+Trees and Rules: C50, BaggedCART, ranger
+
+Three remarks:
+
+1.The seed, metric, and train control have been uniformly predetermined to allow for fair comparison.
+
+2.Cross-Validation, probably the simplest and most widely used method, has been selected for estimating the prediction error.
+
+2.ranger(ranger package) has been favored over the popular randomForest due to its easier fit.
+
+
+
+```{r, message = FALSE, warning = FALSE, comment = NA}
+#Creating uniform parameters
+seed <- set.seed(2810) # Create uniform conditions for comparison's purposes.
+control <- trainControl(method = "cv",
+                        number = 5)
+metric <- "Accuracy"
+
+## Constructing several models
+set.seed(seed)
+rangerFit<- train(classe~.,
+                  data = trainingAdjusted,
+                  method = "ranger",
+                  metric = metric,
+                  trControl = control) 
+                
+
+set.seed(seed)                                      
+knnFit <- train(classe ~.,
+                data = trainingAdjusted,
+                method = "knn",
+                trControl = control,
+                metric = metric, 
+                preProcess = c("center", "scale")) # Mandatory centering and Scaling
+
+set.seed(seed)
+rpartFit <- train(classe ~.,
+                  data= trainingAdjusted,
+                  method = "rpart",
+                  metric = metric, 
+                  trControl = control)
+
+set.seed(seed)
+C5.0Fit <- train(classe ~.,
+                 data= trainingAdjusted,
+                 method = "C5.0",
+                 metric = metric,
+                 trControl = control)
+
+set.seed(seed)
+bagFit <-train(classe ~.,
+               data= trainingAdjusted,
+               method = "treebag",
+               metric = metric, 
+               trControl = control)
+
+set.seed(seed)
+svmRadialFit <-train(classe ~.,
+               data= trainingAdjusted,
+               method = "svmRadial",
+               metric = metric, 
+               trControl = control,
+               preProcess = c("nzv", "center", "scale"),
+               fit = FALSE)
+
+set.seed(seed)
+ldaFit <-train(classe ~.,
+               data= trainingAdjusted,
+               method = "lda",
+               metric = metric, 
+               trControl = control,
+               preProcess = "pca") #scaling by design
+
+set.seed(seed)
+nbFit <-train(classe ~.,
+               data= trainingAdjusted,
+               method = "nb",
+               metric = metric, 
+               trControl = control) #scaling by design                
+
+#Comparing the different models
+model_results <- resamples(list(Ranger = rangerFit, knn = knnFit, CART = rpartFit, C5.0 = C5.0Fit,  baggedCART = bagFit, svmRadial = svmRadialFit,
+                                lda = ldaFit, NaiveBayes = nbFit))
+summary(model_results)
+bwplot(model_results)
+
+```
+
+Clearly, the linear model does not perform well.However, as indicated by the previous plot, C5.0Fit, baggedCART fit and rangerFit are worth to be investigated further.
+
+
+## Improving the model
+
+After reducing our selection, the next logical step would be to try to improve the performance of each of the selected models. Tuning of parameters takes place. The function trainControl has been modified by adding 3 repetition.
+
+
+```{r, message = FALSE, warning = FALSE, comment = NA, results = 'hide'}
+#Customazing trainControl 
+myControl<- trainControl(method = "cv",
+                            number = 5,
+                            repeats = 3, 
+                            summaryFunction = defaultSummary,
+                            classProbs = TRUE,
+                            verboseIter = TRUE)
+#Comparing rangerFit 
+
+set.seed(seed)
+rangerFit.1 <- train(classe~.,
+                     data = trainingAdjusted,
+                     method = "ranger",
+                     trControl = myControl)
+
+set.seed(seed)
+rangerFit.PCA <- train(classe~.,
+                       data = trainingAdjusted,
+                       method = "ranger",
+                       trControl = myControl,
+                       preProcess = "pca")
+set.seed(seed)
+rangerFit.mtry <- train(classe~.,
+                        data = trainingAdjusted,
+                        method = "ranger",
+                        tuneGrid = data.frame(mtry = 7), 
+                        trControl = myControl) 
+```
+
+
+```{r, message = FALSE, warning = FALSE, comment = NA}
+# Assessing the results
+ranger_results <- resamples(list(model1 = rangerFit, model2 = rangerFit.1, model3 =rangerFit.PCA, model4 = rangerFit.mtry)) 
+summary(ranger_results)
+dotplot(ranger_results)
+```
+
+Do note that preprocessing with PCA proved to be disastrous; 20% Accuracy is being lost.The error in the training set tends to decrease with model complexity as evidenced by model 4.
+
+```{r}
+#Improving the C5.0Fit
+set.seed(seed)
+C5.0Fit.1 <- train(classe ~.,
+                 data= trainingAdjusted,
+                 method = "C5.0Tree",
+                 metric = metric,
+                 trControl = control)
+
+C5_results <- resamples(list(model1 = C5.0Fit, model2 = C5.0Fit.1))
+summary(C5_results)
+dotplot(C5_results)
+```
+C5.0Fit is replaced by C5.0Fit.1
+
+
+##Selecting the Model
+
+A conundrum between the first and the second model, Do I favor higher accuracy, but higher variance, or less variance, but less accuracy?
+
+```{r, message = FALSE, warning = FALSE, comment = NA}
+final_results <- resamples(list(modelRanger = rangerFit.mtry, modelBaggedCART = bagFit, modelC5Tree = C5.0Fit.1))
+summary(final_results)
+bwplot(final_results)
+
+```
+
+##Predicting on the Validation Test
+
+The **ranger** machine learning algorithm is finally selected as the best model. As changing the **mtry** parameter from 7 to 3 launches the ranger model to the first place of the plot. 
+
+```{r,message = FALSE, warning = FALSE, comment = NA, results = 'hide'}
+#Remove the seed.
+ranger_final <- train(classe~.,
+                      data = trainingAdjusted,
+                      method = "ranger",
+                      tuneGrid = data.frame(mtry = 3), 
+                      trControl = myControl)
+```
+
+```{r, message = FALSE, warning = FALSE, comment = NA}
+# Validation set
+rangerPredict<- predict(ranger_final, validation)
+confusionMatrix(rangerPredict, validation$classe)
+#plot
+```
+
+
+## Predicting on the testing set. Quiz
+
+However, it is important to mention that the original **mtry** = 7 (number of variables possible to split in each node) was changed to 3. Using the former parameter, a 8/20 ratio of correct answers was obtained; the latter  produced a 20/20 ratio.
+
+```{r, message = FALSE, warning = FALSE, comment = NA} 
+predict(ranger_final, pml.testing )
+```
+
+##Conclusion
+
+The main remark to my first approach to the fascinating science of Machine Learning is the way the NA values were handled; simply omitting them without further ado. A knn imputation had been more fruitful. 
+
+##Data Source
+
+Ugulino, W.; Cardador, D.; Vega, K.; Velloso, E.; Milidiu, R.; Fuks, H. Wearable Computing: Accelerometers' Data Classification of Body Postures and Movements. 
+Proceedings of 21st Brazilian Symposium on Artificial Intelligence. 
+Advances in Artificial Intelligence - SBIA 2012. In: Lecture Notes in Computer Science. , pp. 52-61. Curitiba, PR: Springer Berlin / Heidelberg, 2012. 
+=======
+---
+title: "Machine Learning Project, Coursera"
+author: "aimod62"
+date: "November 15, 2016"
+output: 
+  html_document:
+    number_sections: yes
+    toc: yes
+---
+
+The goal of the present assignment is to provide a machine learning algorithm capable of predicting the manner in which the population perform selected lifting routines. Data is drawn from 6 male participants aged between 20-28 years. The categorical variable **classe** is our response variable. Out of its 5 levels: classe **A** represents a well done execution. The remaining four levels: **B, C, D, E ** portray minor failures.  
+
+A typical classification problem of supervised learning. 
+
+
+##Loading Required Libraries
+
+```{r, message = FALSE, warning = FALSE, comment = NA}
+library(caret)
+library(ranger)
+library(foreach)
+library(e1071)
+library(rpart)
+library(C50)
+library(kernlab)
+library(MASS)
+library(klaR)
+library(ipred)
+library(plyr)
+```
+
+##Loading the Data
+
+Two sets of data have been provided by the assignment prompt:
+
+Training set: 19622 Observations and 160 Variables
+
+Testing set: 20 Observations and 160 Variables
+
+As expected, the test set would be brought out only at the end of the submission in order to assess the generalization error, and corroborate its accuracy by means of the mandatory quiz.
+
+
+```{r, message = FALSE, warning = FALSE, comment = NA}
+pml.training <- read.csv("C:/Users/AstridIleana/Desktop/Machine Learning/Project/pml-training.csv", stringsAsFactors=FALSE)
+pml.testing <- read.csv("C:/Users/AstridIleana/Desktop/Machine Learning/Project/pml-testing.csv", stringsAsFactors= FALSE)
+
+
+```
+
+##Data Partition
+
+The given training data set has been further partitioned in a validation data set. A highly recommendable practice meant to estimate the prediction error of the model.
+
+
+```{r, message = FALSE, warning = FALSE, comment = NA}
+set.seed(1028)
+inTrain <- createDataPartition(y = pml.training$classe, # Outcome Data
+                               p = 0.75,                # Data percentage in the training set.
+                               list = FALSE)            # Results format
+
+#Creating the training and validation set
+
+training <- pml.training[inTrain, ]
+validation <- pml.training[-inTrain, ]
+dim(training); dim(validation)
+table(as.factor(training$classe))
+table(as.factor(validation$classe))
+
+
+```
+
+
+##Removing Irrelevant and Redundant Information
+
+A subset of the training data has been created. Two features have been removed: near zero variances variables and NA values. The idea is to clear as much redundant and irrelevant data as possible; in order to reduce the dimensionality and allow the algorithm to operate faster and more accurate. 
+
+
+```{r, message = FALSE, warning = FALSE, comment = NA}
+
+#Getting rid of near zero variance predictors and NA values
+remove <- nearZeroVar(training, names = TRUE, allowParallel = TRUE)
+trainingAdjusted <- training[, setdiff(names(training), remove)]
+trainingAdjusted <- trainingAdjusted[, colSums(is.na(trainingAdjusted)) == 0]
+dim(trainingAdjusted)
+
+```
+
+##Trial and Error, in Search of the Best Fit
+
+Since there is no clue of the data distribution until now, an ensemble of models have been chosen from the wide spectrum to look for the best fit. The idea is to use few of them, and evolve further. 
+
+*Non-linear Methods: knn, NaiveBayes, SVM
+
+*Linear Methods: Linear Discriminant Analysis 
+
+*Ensemble of Trees: CART(rpart)
+
+Trees and Rules: C50, BaggedCART, ranger
+
+Three remarks:
+
+1.The seed, metric, and train control have been uniformly predetermined to allow for fair comparison.
+
+2.Cross-Validation, probably the simplest and most widely used method, has been selected for estimating the prediction error.
+
+2.ranger(ranger package) has been favored over the popular randomForest due to its easier fit.
+
+
+
+```{r, message = FALSE, warning = FALSE, comment = NA}
+#Creating uniform parameters
+seed <- set.seed(2810) # Create uniform conditions for comparison's purposes.
+control <- trainControl(method = "cv",
+                        number = 5)
+metric <- "Accuracy"
+
+## Constructing several models
+set.seed(seed)
+rangerFit<- train(classe~.,
+                  data = trainingAdjusted,
+                  method = "ranger",
+                  metric = metric,
+                  trControl = control) 
+                
+
+set.seed(seed)                                      
+knnFit <- train(classe ~.,
+                data = trainingAdjusted,
+                method = "knn",
+                trControl = control,
+                metric = metric, 
+                preProcess = c("center", "scale")) # Mandatory centering and Scaling
+
+set.seed(seed)
+rpartFit <- train(classe ~.,
+                  data= trainingAdjusted,
+                  method = "rpart",
+                  metric = metric, 
+                  trControl = control)
+
+set.seed(seed)
+C5.0Fit <- train(classe ~.,
+                 data= trainingAdjusted,
+                 method = "C5.0",
+                 metric = metric,
+                 trControl = control)
+
+set.seed(seed)
+bagFit <-train(classe ~.,
+               data= trainingAdjusted,
+               method = "treebag",
+               metric = metric, 
+               trControl = control)
+
+set.seed(seed)
+svmRadialFit <-train(classe ~.,
+               data= trainingAdjusted,
+               method = "svmRadial",
+               metric = metric, 
+               trControl = control,
+               preProcess = c("nzv", "center", "scale"),
+               fit = FALSE)
+
+set.seed(seed)
+ldaFit <-train(classe ~.,
+               data= trainingAdjusted,
+               method = "lda",
+               metric = metric, 
+               trControl = control,
+               preProcess = "pca") #scaling by design
+
+set.seed(seed)
+nbFit <-train(classe ~.,
+               data= trainingAdjusted,
+               method = "nb",
+               metric = metric, 
+               trControl = control) #scaling by design                
+
+#Comparing the different models
+model_results <- resamples(list(Ranger = rangerFit, knn = knnFit, CART = rpartFit, C5.0 = C5.0Fit,  baggedCART = bagFit, svmRadial = svmRadialFit,
+                                lda = ldaFit, NaiveBayes = nbFit))
+summary(model_results)
+bwplot(model_results)
+
+```
+
+Clearly, the linear model does not perform well.However, as indicated by the previous plot, C5.0Fit, baggedCART fit and rangerFit are worth to be investigated further.
+
+
+## Improving the model
+
+After reducing our selection, the next logical step would be to try to improve the performance of each of the selected models. Tuning of parameters takes place. The function trainControl has been modified by adding 3 repetition.
+
+
+```{r, message = FALSE, warning = FALSE, comment = NA, results = 'hide'}
+#Customazing trainControl 
+myControl<- trainControl(method = "cv",
+                            number = 5,
+                            repeats = 3, 
+                            summaryFunction = defaultSummary,
+                            classProbs = TRUE,
+                            verboseIter = TRUE)
+#Comparing rangerFit 
+
+set.seed(seed)
+rangerFit.1 <- train(classe~.,
+                     data = trainingAdjusted,
+                     method = "ranger",
+                     trControl = myControl)
+
+set.seed(seed)
+rangerFit.PCA <- train(classe~.,
+                       data = trainingAdjusted,
+                       method = "ranger",
+                       trControl = myControl,
+                       preProcess = "pca")
+set.seed(seed)
+rangerFit.mtry <- train(classe~.,
+                        data = trainingAdjusted,
+                        method = "ranger",
+                        tuneGrid = data.frame(mtry = 7), 
+                        trControl = myControl) 
+```
+
+
+```{r, message = FALSE, warning = FALSE, comment = NA}
+# Assessing the results
+ranger_results <- resamples(list(model1 = rangerFit, model2 = rangerFit.1, model3 =rangerFit.PCA, model4 = rangerFit.mtry)) 
+summary(ranger_results)
+dotplot(ranger_results)
+```
+
+Do note that preprocessing with PCA proved to be disastrous; 20% Accuracy is being lost.The error in the training set tends to decrease with model complexity as evidenced by model 4.
+
+```{r}
+#Improving the C5.0Fit
+set.seed(seed)
+C5.0Fit.1 <- train(classe ~.,
+                 data= trainingAdjusted,
+                 method = "C5.0Tree",
+                 metric = metric,
+                 trControl = control)
+
+C5_results <- resamples(list(model1 = C5.0Fit, model2 = C5.0Fit.1))
+summary(C5_results)
+dotplot(C5_results)
+```
+C5.0Fit is replaced by C5.0Fit.1
+
+
+##Selecting the Model
+
+A conundrum between the first and the second model, Do I favor higher accuracy, but higher variance, or less variance, but less accuracy?
+
+```{r, message = FALSE, warning = FALSE, comment = NA}
+final_results <- resamples(list(modelRanger = rangerFit.mtry, modelBaggedCART = bagFit, modelC5Tree = C5.0Fit.1))
+summary(final_results)
+bwplot(final_results)
+
+```
+
+##Predicting on the Validation Test
+
+The **ranger** machine learning algorithm is finally selected as the best model. As changing the **mtry** parameter from 7 to 3 launches the ranger model to the first place of the plot. 
+
+```{r,message = FALSE, warning = FALSE, comment = NA, results = 'hide'}
+#Remove the seed.
+ranger_final <- train(classe~.,
+                      data = trainingAdjusted,
+                      method = "ranger",
+                      tuneGrid = data.frame(mtry = 3), 
+                      trControl = myControl)
+```
+
+```{r, message = FALSE, warning = FALSE, comment = NA}
+# Validation set
+rangerPredict<- predict(ranger_final, validation)
+confusionMatrix(rangerPredict, validation$classe)
+#plot
+```
+
+
+## Predicting on the testing set. Quiz
+
+However, it is important to mention that the original **mtry** = 7 (number of variables possible to split in each node) was changed to 3. Using the former parameter, a 8/20 ratio of correct answers was obtained; the latter  produced a 20/20 ratio.
+
+```{r, message = FALSE, warning = FALSE, comment = NA} 
+predict(ranger_final, pml.testing )
+```
+
+##Conclusion
+
+The main remark to my first approach to the fascinating science of Machine Learning is the way the NA values were handled; simply omitting them without further ado. A knn imputation had been more fruitful. 
+
+##Data Source
+
+Ugulino, W.; Cardador, D.; Vega, K.; Velloso, E.; Milidiu, R.; Fuks, H. Wearable Computing: Accelerometers' Data Classification of Body Postures and Movements. 
+Proceedings of 21st Brazilian Symposium on Artificial Intelligence. 
+Advances in Artificial Intelligence - SBIA 2012. In: Lecture Notes in Computer Science. , pp. 52-61. Curitiba, PR: Springer Berlin / Heidelberg, 2012. 
+>>>>>>> 8eb8f9cd92ad07fa222653b8c51ef14455bb147e
+ISBN 978-3-642-34458-9. DOI: 10.1007/978-3-642-34459-6_6. 
